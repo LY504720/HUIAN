@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # 恢复默认颜色
 
 # 获取项目根目录（从urs/bin向上三级）
-PROJECT_ROOT="$(realpath "$(dirname "${BASH_SOURCE[0]}")/../../..")"
+PROJECT_ROOT="$(realpath "$(dirname "${BASH_SOURCE[0]}")/../..")"
 
 # 验证项目根目录
 if [[ ! -d "$PROJECT_ROOT" ]]; then

@@ -29,6 +29,9 @@ mirrors=(
 # 超时设置（秒）- 修改这个值可以调整测试超时时间
 TIMEOUT=3
 
+# 低延迟阈值（毫秒）- 低于此值直接使用
+LOW_LATENCY_THRESHOLD=850
+
 # ====================== 脚本功能区域 ======================
 # 显示帮助信息
 show_help() {
@@ -47,6 +50,7 @@ show_help() {
     echo "配置说明:"
     echo "  1. 镜像源列表可在脚本开头 'mirrors' 数组中修改"
     echo "  2. 超时设置可在 'TIMEOUT' 变量中修改（当前为 ${TIMEOUT}秒）"
+    echo "  3. 低延迟阈值可在 'LOW_LATENCY_THRESHOLD' 变量中修改（当前为 ${LOW_LATENCY_THRESHOLD}ms）"
     echo
     echo "提示:"
     echo "  对于 git 操作（clone/pull/fetch）会自动使用 git 命令"
@@ -72,13 +76,11 @@ test_mirror() {
 # 查找最快的镜像源
 find_fastest_mirror() {
   # 所有测试过程输出到stderr
-  echo "正在测试 GitHub 镜像源..." >&2
+  echo "正在测试 GitHub 镜像源 (低延迟阈值: ${LOW_LATENCY_THRESHOLD}ms)..." >&2
 
   declare -A mirror_speeds
   local best_time=99999
   local best_mirror=""
-  
-  # 新增：标记是否找到低延迟源
   local found_low_latency=0
   
   for mirror in "${mirrors[@]}"; do
@@ -87,15 +89,14 @@ find_fastest_mirror() {
           printf "  \e[32m%-30s\e[0m → %4d ms\n" "$mirror" "$speed" >&2
           mirror_speeds[$mirror]=$speed
           
-          # ===== 新增逻辑：检测到低延迟源直接使用 =====
-          if [ $speed -lt 900 ]; then
-              echo -e "  \e[33m发现低延迟镜像源 $mirror (${speed}ms < 900ms)，直接选用\e[0m" >&2
+          # 检测到低延迟源直接使用
+          if [ $speed -lt $LOW_LATENCY_THRESHOLD ]; then
+              echo -e "  \e[33m发现低延迟镜像源 $mirror (${speed}ms < ${LOW_LATENCY_THRESHOLD}ms)，直接选用\e[0m" >&2
               best_mirror=$mirror
               best_time=$speed
               found_low_latency=1
-              break  # 跳出测试循环
+              break
           fi
-          # ===== 结束新增 =====
           
           # 更新最快记录
           if [ $speed -lt $best_time ]; then
@@ -117,9 +118,26 @@ find_fastest_mirror() {
       else
           echo -e "\n\e[32m最快镜像源：$best_mirror (${best_time}ms)\e[0m" >&2
       fi
-      echo "https://$best_mirror/"
+      echo "$best_mirror"
       return 0
   fi
+}
+# 构建代理URL
+build_proxy_url() {
+    local original_url=$1
+    local best_mirror=$2
+    
+    # 转换SSH协议到HTTPS
+    if [[ "$original_url" == git@github.com:* ]]; then
+        original_url="https://github.com/${original_url#git@github.com:}"
+    fi
+    
+    # 确保以 https://github.com/ 开头
+    if [[ "$original_url" =~ ^https://github.com/ ]]; then
+        echo "https://${best_mirror}/${original_url#https://github.com/}"
+    else
+        echo "$original_url"
+    fi
 }
 
 # 主函数
@@ -141,31 +159,91 @@ main() {
         return 1
     fi
     
-    local original_url=${!#}
-    
     # 获取最快的镜像源
     local best_mirror=$(find_fastest_mirror)
     if [ $? -ne 0 ]; then
         return 1
     fi
     
-    # 构建代理URL
-    local proxy_url="${best_mirror}${original_url}"
-    echo "代理地址：$proxy_url"
-    
-    # 执行命令
-    echo "执行命令: ${*:1:$#-1} $proxy_url"
+    local original_url=${!#}
     
     # 判断命令类型
-    if [[ $1 == "clone" ]] || [[ $1 == "pull" ]] || [[ $1 == "fetch" ]]; then
+    if [[ $1 == "clone" ]]; then
+        # CLONE 命令处理
+        local proxy_url=$(build_proxy_url "$original_url" "$best_mirror")
+        echo "使用镜像源: ${best_mirror}"
+        echo "执行命令: git ${@:1:$#-1} \"$proxy_url\""
         git "${@:1:$#-1}" "$proxy_url"
+        elif [[ $1 == "fetch" || $1 == "pull" ]]; then
+        # PULL/FETCH 命令处理
+        # 检查是否在git仓库中
+        if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            echo "错误：当前目录不是一个git仓库，无法执行 '$1' 命令。" >&2
+            return 1
+        fi
+
+        # 获取远程名称（默认origin）
+        local remote_name="origin"
+        # 查找命令中指定的远程名称
+        for arg in "$@"; do
+            if [[ "$arg" != "fetch" && "$arg" != "pull" && ! "$arg" =~ ^- ]]; then
+                remote_name="$arg"
+                break
+            fi
+        done
+
+        # 获取原始远程URL
+        local remote_url=$(git remote get-url "$remote_name" 2>/dev/null)
+        if [ $? -ne 0 ]; then
+            echo "错误：远程 '$remote_name' 不存在。" >&2
+            return 1
+        fi
+
+        # 构建镜像远程URL
+        local proxy_remote_url=$(build_proxy_url "$remote_url" "$best_mirror")
+        
+        # 生成随机远程名称
+        local temp_remote="mirror-$(date +%s%N)"
+        
+        # 添加临时远程
+        git remote add "$temp_remote" "$proxy_remote_url" >/dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            echo "错误：添加临时远程失败。" >&2
+            return 1
+        fi
+        
+        # 构建新命令（替换原远程名为临时远程名）
+        local new_cmd=()
+        for arg in "$@"; do
+            if [[ "$arg" == "$remote_name" ]]; then
+                new_cmd+=("$temp_remote")
+            else
+                new_cmd+=("$arg")
+            fi
+        done
+        
+        # 执行命令
+        echo "使用镜像源: ${best_mirror}"
+        echo "执行命令: git ${new_cmd[@]}"
+        git "${new_cmd[@]}"
+        local git_status=$?
+        
+        # 删除临时远程
+        git remote remove "$temp_remote" >/dev/null 2>&1
+        
+        return $git_status
     else
-        if command -v wget &>/dev/null; then
+        # 非git命令使用下载工具
+        local proxy_url=$(build_proxy_url "$original_url" "$best_mirror")
+        echo "使用镜像源: ${best_mirror}"
+        echo "下载地址: $proxy_url"
+        
+        if command -v wget &> /dev/null; then
             wget "${@:1:$#-1}" "$proxy_url"
-        elif command -v curl &>/dev/null; then
-            curl "${@:1:$#-1}" -L -O "$proxy_url"
+        elif command -v curl &> /dev/null; then
+            curl -L -O "${@:1:$#-1}" "$proxy_url"
         else
-            echo -e "\e[31m错误：需要 wget 或 curl 但未找到\e[0m"
+            echo "错误：没有找到 wget 或 curl，无法下载。" >&2
             return 1
         fi
     fi

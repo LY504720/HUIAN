@@ -16,7 +16,7 @@ COMFYUI_DIR="../../../data/ComfyUI"
 CUSTOM_NODES_DIR="$COMFYUI_DIR/custom_nodes"
 
 # ComfyUI-Manager 仓库
-MANAGER_REPO="https://gitclone.com/github.com/ltdrdata/ComfyUI-Manager.git"
+MANAGER_REPO="https://github.com/ltdrdata/ComfyUI-Manager.git"
 MANAGER_DIR="$CUSTOM_NODES_DIR/ComfyUI-Manager"
 
 # 权限管理脚本
@@ -48,7 +48,7 @@ install_manager() {
         cd - > /dev/null
     else
         # 克隆仓库
-        git clone "$MANAGER_REPO" "$MANAGER_DIR"
+        mgit clone "$MANAGER_REPO" "$MANAGER_DIR"
     fi
     
     # 检查安装结果

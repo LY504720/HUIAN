@@ -124,9 +124,10 @@ calculate_score() {
     # 如果是官方源且测试成功，特殊处理
     if [[ "$mirror" == "github.com" ]] && 
        [[ "$latency" != "timeout" ]] && 
-       [[ "$speed" != "failed" ]]; then
-        # 官方源默认给最高分
-        echo 999999
+       [[ "$speed" != "failed" ]] && 
+       [[ "$speed" -gt 0 ]]; then
+        # 官方源默认给最高分（确保高于其他镜像）
+        echo 80
         return
     fi
     

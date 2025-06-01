@@ -44,7 +44,8 @@ if [[ ! -f "$START_SCRIPT" ]]; then
     echo -e "请确保项目已正确安装"
     exit 1
 fi
-source urs/.mod/*.sh
+
+bash urs/.mod/*.sh
 
 
 

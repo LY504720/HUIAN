@@ -44,13 +44,21 @@ if [[ ! -f "$START_SCRIPT" ]]; then
     echo -e "请确保项目已正确安装"
     exit 1
 fi
-
-bash urs/.mod/*.sh
-
-
-
-
-
+# 模块执行部分
+mod_dir="urs/.mod"
+if [[ -d "$mod_dir" ]]; then
+    for script in "$mod_dir"/*.sh; do
+        # 移除冗余的可执行权限检查
+        if [[ -f "$script" ]]; then
+            if ! bash "$script"; then
+                echo -e "${YELLOW}警告: $script 执行失败 (退出码: $?)${NC}" >&2
+                # 根据需求决定是否终止：exit 1
+            fi
+        fi
+    done
+else
+    echo -e "${YELLOW}模块目录不存在: $mod_dir${NC}"
+fi
 # 执行启动脚本
 bash "$START_SCRIPT"
 

@@ -66,7 +66,7 @@ if [[ -d ".git" ]]; then
     git clean -f -d --exclude=data/
     
     # 拉取更新
-    git pull origin "$CURRENT_BRANCH"
+    mgit pull origin "$CURRENT_BRANCH"
     
     if [[ $? -eq 0 ]]; then
         echo -e "${GREEN}项目更新成功！${NC}"
@@ -109,7 +109,7 @@ else
     echo -e "原目录已备份至: ${YELLOW}$BACKUP_DIR${NC}"
     
     # 重新克隆
-    git clone "$REPO_URL" "$PROJECT_ROOT"
+    mgit clone "$REPO_URL" "$PROJECT_ROOT"
     if [[ $? -eq 0 ]]; then
         echo -e "${GREEN}项目克隆成功！${NC}"
         

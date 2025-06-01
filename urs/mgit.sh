@@ -23,15 +23,21 @@ mirrors=(
     "gh-proxy.net"
     "github.acmsz.top"
     "github-proxy.kongkuang.icu"
-    "j.1lin.dpdns.org"
 )
 
 # 超时设置（秒）
 TIMEOUT=3
 
-# 低延迟阈值（毫秒）
-LOW_LATENCY_THRESHOLD=800
+# 测试文件（用于速度测试）
+TEST_FILE="https://github.com/ginuerzh/gost/archive/refs/tags/v2.11.5.tar.gz"
+TEST_FILE_SIZE=2100000  #大小
 
+# 权重设置（延迟权重 + 速度权重 = 100%）
+LATENCY_WEIGHT=900
+SPEED_WEIGHT=10
+
+# 并发线程数（根据CPU核心数自动设置）
+CONCURRENCY=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 # ====================== 脚本功能区域 ======================
 # 显示帮助信息
 show_help() {
@@ -50,15 +56,16 @@ show_help() {
     echo "配置说明:"
     echo "  1. 镜像源列表可在脚本开头 'mirrors' 数组中修改"
     echo "  2. 超时设置可在 'TIMEOUT' 变量中修改（当前为 ${TIMEOUT}秒）"
-    echo "  3. 低延迟阈值可在 'LOW_LATENCY_THRESHOLD' 变量中修改（当前为 ${LOW_LATENCY_THRESHOLD}ms）"
+    echo "  3. 测试文件可在 'TEST_FILE' 变量中修改（当前测试文件大小: $((TEST_FILE_SIZE/1000))KB）"
+    echo "  4. 延迟/速度权重可在 'LATENCY_WEIGHT' 和 'SPEED_WEIGHT' 中修改（当前 ${LATENCY_WEIGHT}%延迟/${SPEED_WEIGHT}%速度）"
+    echo "  5. 并发线程数: ${CONCURRENCY} (自动检测)"
     echo
     echo "提示:"
     echo "  对于 git 操作（clone/pull/fetch）会自动使用 git 命令"
     echo "  其他操作会自动使用 wget 或 curl"
 }
-
 # 检测响应时间（毫秒）
-test_mirror() {
+test_latency() {
     local mirror=$1
     
     # 使用 curl 测试实际响应时间
@@ -73,74 +80,207 @@ test_mirror() {
     fi
 }
 
-# 查找最快的镜像源
+# 测试下载速度（KB/s）
+test_speed() {
+    local mirror=$1
+    local test_url="https://${mirror}/${TEST_FILE#https://}"
+    
+    # 使用 curl 测试下载速度
+    local start_time=$(date +%s)
+    local downloaded_bytes=$(curl -s -w "%{size_download}" -o /dev/null -L "$test_url" -m $TIMEOUT 2>/dev/null)
+    local end_time=$(date +%s)
+    
+    if [ $? -eq 0 ] && [ "$downloaded_bytes" -gt 0 ]; then
+        local duration=$((end_time - start_time))
+        if [ $duration -eq 0 ]; then
+            duration=1  # 避免除以0
+        fi
+        local speed=$((downloaded_bytes / duration / 1024))
+        echo $speed
+    else
+        echo "failed"
+    fi
+}
+
+# 计算综合评分
+calculate_score() {
+    local latency=$1
+    local speed=$2
+    
+    # 标准化处理（反转延迟：延迟越低越好）
+    local normalized_latency=$((1000 - latency))
+    if [ $normalized_latency -lt 0 ]; then
+        normalized_latency=0
+    fi
+    
+    # 加权计算
+    local latency_score=$((normalized_latency * LATENCY_WEIGHT / 1000))
+    local speed_score=$((speed * SPEED_WEIGHT))
+    local total_score=$((latency_score + speed_score))
+    
+    echo $total_score
+}
+# 并行测试单个镜像源
+test_mirror() {
+    local mirror=$1
+    local result_file=$2
+    
+    # 测试延迟
+    local latency=$(test_latency "$mirror")
+    
+    # 测试下载速度
+    local speed=$(test_speed "$mirror")
+    
+    # 保存结果到临时文件
+    echo "$mirror $latency $speed" >> "$result_file"
+}
+
+# 查找最快的镜像源（多线程版）
 find_fastest_mirror() {
-  # 所有测试过程输出到stderr
-  echo "正在测试 GitHub 镜像源 (低延迟阈值: ${LOW_LATENCY_THRESHOLD}ms)..." >&2
+    echo "正在测试 GitHub 镜像源 (延迟权重:${LATENCY_WEIGHT}% 速度权重:${SPEED_WEIGHT}%)..." >&2
+    echo "测试文件: ${TEST_FILE} ($((TEST_FILE_SIZE/1000))KB)" >&2
+    echo "并发线程数: ${CONCURRENCY}" >&2
 
-  declare -A mirror_speeds
-  local best_time=99999
-  local best_mirror=""
-  local found_low_latency=0
-  
-  for mirror in "${mirrors[@]}"; do
-      speed=$(test_mirror "$mirror")
-      if [[ $speed =~ ^[0-9]+$ ]]; then
-          printf "  \e[32m%-30s\e[0m → %4d ms\n" "$mirror" "$speed" >&2
-          mirror_speeds[$mirror]=$speed
-          
-          # 检测到低延迟源直接使用
-          if [ $speed -lt $LOW_LATENCY_THRESHOLD ]; then
-              echo -e "  \e[33m发现低延迟镜像源 $mirror (${speed}ms < ${LOW_LATENCY_THRESHOLD}ms)，直接选用\e[0m" >&2
-              best_mirror=$mirror
-              best_time=$speed
-              found_low_latency=1
-              break
-          fi
-          
-          # 更新最快记录
-          if [ $speed -lt $best_time ]; then
-              best_time=$speed
-              best_mirror=$mirror
-          fi
-      else
-          printf "  \e[31m%-30s\e[0m → %s\n" "$mirror" "$speed" >&2
-      fi
-  done
+    # 创建临时文件存储结果
+    local result_file=$(mktemp)
+    
+    # 创建管道用于并发控制
+    local pipe=$(mktemp -u)
+    mkfifo "$pipe"
+    exec 3<>"$pipe"
+    rm -f "$pipe"
+    
+    # 初始化管道
+    for ((i=0; i<CONCURRENCY; i++)); do
+        echo >&3
+    done
+    
+    # 启动所有测试任务
+    local pids=()
+    for mirror in "${mirrors[@]}"; do
+        # 等待可用槽位
+        read -u 3 -t 10
+        if [ $? -ne 0 ]; then
+            echo "并发控制超时，跳过 $mirror" >&2
+            continue
+        fi
+        
+        # 启动后台任务
+        (
+            test_mirror "$mirror" "$result_file"
+            # 释放槽位
+            echo >&3
+        ) &
+        pids+=($!)  # 修复行：正确收集后台进程PID
+    done
+    
+    # 等待所有任务完成
+    for pid in "${pids[@]}"; do
+        wait $pid 2>/dev/null
+    done
+    
+    # 关闭文件描述符
+    exec 3>&-
+    
+    # 读取并处理结果
+    declare -A mirror_scores
+    local best_score=0
+    local best_mirror=""
+    
+    # 检查结果文件是否存在
+    if [ ! -f "$result_file" ]; then
+        echo -e "\n\e[31m错误：测试结果文件不存在，可能所有测试都失败了\e[0m" >&2
+        rm -f "$result_file" 2>/dev/null
+        return 1
+    fi
 
-  if [ -z "$best_mirror" ]; then
-      echo -e "\e[31m错误：没有可用的镜像源，请检查网络连接\e[0m" >&2
-      return 1
-  else
-      # 根据是否找到低延迟源显示不同信息
-      if [ $found_low_latency -eq 1 ]; then
-          echo -e "\n\e[33m直接选用低延迟镜像源：$best_mirror (${best_time}ms)\e[0m" >&2
-      else
-          echo -e "\n\e[32m最快镜像源：$best_mirror (${best_time}ms)\e[0m" >&2
-      fi
-      echo "$best_mirror"
-      return 0
-  fi
+    while read -r line; do
+        local mirror=$(echo "$line" | awk '{print $1}')
+        local latency=$(echo "$line" | awk '{print $2}')
+        local speed=$(echo "$line" | awk '{print $3}')
+        
+        # 显示测试结果
+        if [[ $latency =~ ^[0-9]+$ ]] && [[ $speed =~ ^[0-9]+$ ]]; then
+            # 计算综合评分
+            local score=$(calculate_score $latency $speed)
+            mirror_scores[$mirror]=$score
+            
+            # 输出结果（带颜色）
+            printf "  \e[32m%-30s\e[0m → " "$mirror" >&2
+            printf "延迟: \e[33m%4dms\e[0m " "$latency" >&2
+            printf "速度: \e[36m%3dKB/s\e[0m " "$speed" >&2
+            printf "评分: \e[35m%5d\e[0m\n" "$score" >&2
+            
+            # 更新最佳镜像
+            if [ $score -gt $best_score ]; then
+                best_score=$score
+                best_mirror=$mirror
+            fi
+        else
+            # 输出失败信息
+            printf "  \e[31m%-30s\e[0m → " "$mirror" >&2
+            if [[ $latency != "timeout" ]]; then
+                printf "延迟测试失败" >&2
+            else
+                printf "延迟: \e[31m超时\e[0m " >&2
+            fi
+            
+            if [[ $speed != "failed" ]]; then
+                printf "速度测试失败\n" >&2
+            else
+                printf "速度: \e[31m失败\e[0m\n" >&2
+            fi
+        fi
+    done < "$result_file"
+    
+    # 清理临时文件
+    rm -f "$result_file"
+
+    if [ -z "$best_mirror" ]; then
+        echo -e "\n\e[31m错误：没有可用的镜像源，请检查网络连接\e[0m" >&2
+        return 1
+    else
+        # 显示最佳镜像源详情
+        local best_latency=$(test_latency "$best_mirror")
+        local best_speed=$(test_speed "$best_mirror")
+        
+        echo -e "\n\e[32m最佳镜像源：$best_mirror\e[0m" >&2
+        echo -e "  → 延迟: \e[33m${best_latency}ms\e[0m, 速度: \e[36m${best_speed}KB/s\e[0m, 综合评分: \e[35m${best_score}\e[0m" >&2
+        echo "$best_mirror"
+        return 0
+    fi
 }
 # 构建代理URL
 build_proxy_url() {
     local original_url=$1
     local best_mirror=$2
     
+    # 处理中文路径等特殊字符
+    original_url=$(echo "$original_url" | sed 's/ /%20/g' | sed 's/链接1/https:\/\/github.com\/ltdrdata\/ComfyUI-Manager/g')
+    
     # 转换SSH协议到HTTPS
     if [[ "$original_url" == git@github.com:* ]]; then
         original_url="https://github.com/${original_url#git@github.com:}"
     fi
     
-    # 确保以 https://github.com/ 开头
-    if [[ "$original_url" =~ ^https://github.com/ ]]; then
-        # 修复URL拼接问题：https://镜像源/https://github.com/...
+    # 处理不同格式的GitHub URL
+    if [[ "$original_url" =~ ^https://github\.com/ ]]; then
+        # 直接拼接镜像域名和完整原始URL
         echo "https://${best_mirror}/${original_url}"
+    elif [[ "$original_url" =~ ^http://github\.com/ ]]; then
+        echo "http://${best_mirror}/${original_url}"
+    elif [[ "$original_url" =~ ^github\.com/ ]]; then
+        # 补全为完整URL
+        echo "https://${best_mirror}/https://${original_url}"
     else
-        echo "$original_url"
+        # 特殊处理 ComfyUI-Manager
+        if [[ "$original_url" == "/ComfyUI-Manager" ]]; then
+            echo "https://${best_mirror}/https://github.com/ltdrdata/ComfyUI-Manager"
+        else
+            echo "$original_url"
+        fi
     fi
 }
-
 # 主函数
 main() {
     # 处理帮助选项
@@ -175,7 +315,7 @@ main() {
         echo "使用镜像源: ${best_mirror}"
         echo "执行命令: git ${@:1:$#-1} \"$proxy_url\""
         git "${@:1:$#-1}" "$proxy_url"
-        elif [[ $1 == "fetch" || $1 == "pull" ]]; then
+    elif [[ $1 == "fetch" || $1 == "pull" ]]; then
         # PULL/FETCH 命令处理
         # 检查是否在git仓库中
         if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -252,3 +392,5 @@ main() {
 
 # 执行主函数
 main "$@"
+
+

@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # ====================== 可修改配置区域 ======================
-# GitHub 镜像源列表
+# GitHub 镜像源列表（添加官方源）
 mirrors=(
+    "github.com"           # 官方源
     "github.moeyy.xyz"
     "github.proxy.class3.fun"
     "ghproxy.net"
@@ -32,9 +33,18 @@ TIMEOUT=3
 TEST_FILE="https://github.com/ginuerzh/gost/archive/refs/tags/v2.11.5.tar.gz"
 TEST_FILE_SIZE=2100000  #大小
 
-# 权重设置（延迟权重 + 速度权重 = 100%）
-LATENCY_WEIGHT=900
-SPEED_WEIGHT=10
+# ====== 权重设置（可修改为以下任一模式） ======
+# 模式1：完全以延迟为基准（延迟100%）
+LATENCY_WEIGHT=1000
+SPEED_WEIGHT=0
+
+# 模式2：完全以速度为基准（速度100%）
+# LATENCY_WEIGHT=0
+# SPEED_WEIGHT=1000
+
+# 模式3：混合模式（默认延迟90%+速度10%）
+# LATENCY_WEIGHT=900
+# SPEED_WEIGHT=100
 
 # 并发线程数（根据CPU核心数自动设置）
 CONCURRENCY=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
@@ -47,6 +57,8 @@ show_help() {
     echo "选项:"
     echo "  -h, --help     显示此帮助信息"
     echo "  -t, --test     仅测试镜像源速度，不执行操作"
+    echo "  -l, --latency  完全以延迟为基准选择镜像"
+    echo "  -s, --speed    完全以速度为基准选择镜像"
     echo
     echo "示例:"
     echo "  mgit clone https://github.com/user/repo.git"
@@ -57,12 +69,13 @@ show_help() {
     echo "  1. 镜像源列表可在脚本开头 'mirrors' 数组中修改"
     echo "  2. 超时设置可在 'TIMEOUT' 变量中修改（当前为 ${TIMEOUT}秒）"
     echo "  3. 测试文件可在 'TEST_FILE' 变量中修改（当前测试文件大小: $((TEST_FILE_SIZE/1000))KB）"
-    echo "  4. 延迟/速度权重可在 'LATENCY_WEIGHT' 和 'SPEED_WEIGHT' 中修改（当前 ${LATENCY_WEIGHT}%延迟/${SPEED_WEIGHT}%速度）"
+    echo "  4. 延迟/速度权重可在 'LATENCY_WEIGHT' 和 'SPEED_WEIGHT' 中修改（当前 ${LATENCY_WEIGHT}‰延迟/${SPEED_WEIGHT}‰速度）"
     echo "  5. 并发线程数: ${CONCURRENCY} (自动检测)"
     echo
     echo "提示:"
     echo "  对于 git 操作（clone/pull/fetch）会自动使用 git 命令"
     echo "  其他操作会自动使用 wget 或 curl"
+    echo "  使用 -l 或 -s 选项可临时切换权重模式"
 }
 # 检测响应时间（毫秒）
 test_latency() {
@@ -106,6 +119,22 @@ test_speed() {
 calculate_score() {
     local latency=$1
     local speed=$2
+    local mirror=$3
+    
+    # 如果是官方源且测试成功，特殊处理
+    if [[ "$mirror" == "github.com" ]] && 
+       [[ "$latency" != "timeout" ]] && 
+       [[ "$speed" != "failed" ]]; then
+        # 官方源默认给最高分
+        echo 999999
+        return
+    fi
+    
+    # 处理测试失败的情况
+    if [[ "$latency" == "timeout" ]] || [[ "$speed" == "failed" ]]; then
+        echo -1
+        return
+    fi
     
     # 标准化处理（反转延迟：延迟越低越好）
     local normalized_latency=$((1000 - latency))
@@ -137,7 +166,7 @@ test_mirror() {
 
 # 查找最快的镜像源（多线程版）
 find_fastest_mirror() {
-    echo "正在测试 GitHub 镜像源 (延迟权重:${LATENCY_WEIGHT}% 速度权重:${SPEED_WEIGHT}%)..." >&2
+    echo "正在测试 GitHub 镜像源 (延迟权重:${LATENCY_WEIGHT}‰ 速度权重:${SPEED_WEIGHT}‰)..." >&2
     echo "测试文件: ${TEST_FILE} ($((TEST_FILE_SIZE/1000))KB)" >&2
     echo "并发线程数: ${CONCURRENCY}" >&2
 
@@ -171,7 +200,7 @@ find_fastest_mirror() {
             # 释放槽位
             echo >&3
         ) &
-        pids+=($!)  # 修复行：正确收集后台进程PID
+        pids+=($!)
     done
     
     # 等待所有任务完成
@@ -184,7 +213,7 @@ find_fastest_mirror() {
     
     # 读取并处理结果
     declare -A mirror_scores
-    local best_score=0
+    local best_score=-1
     local best_mirror=""
     
     # 检查结果文件是否存在
@@ -199,44 +228,56 @@ find_fastest_mirror() {
         local latency=$(echo "$line" | awk '{print $2}')
         local speed=$(echo "$line" | awk '{print $3}')
         
-        # 显示测试结果
-        if [[ $latency =~ ^[0-9]+$ ]] && [[ $speed =~ ^[0-9]+$ ]]; then
-            # 计算综合评分
-            local score=$(calculate_score $latency $speed)
-            mirror_scores[$mirror]=$score
-            
-            # 输出结果（带颜色）
-            printf "  \e[32m%-30s\e[0m → " "$mirror" >&2
-            printf "延迟: \e[33m%4dms\e[0m " "$latency" >&2
-            printf "速度: \e[36m%3dKB/s\e[0m " "$speed" >&2
-            printf "评分: \e[35m%5d\e[0m\n" "$score" >&2
-            
-            # 更新最佳镜像
-            if [ $score -gt $best_score ]; then
-                best_score=$score
-                best_mirror=$mirror
-            fi
-        else
-            # 输出失败信息
+        # 计算综合评分
+        local score=$(calculate_score "$latency" "$speed" "$mirror")
+        
+        # 跳过无效分数
+        if [ $score -eq -1 ]; then
+            # 显示测试结果
             printf "  \e[31m%-30s\e[0m → " "$mirror" >&2
-            if [[ $latency != "timeout" ]]; then
-                printf "延迟测试失败" >&2
-            else
+            if [[ "$latency" == "timeout" ]]; then
                 printf "延迟: \e[31m超时\e[0m " >&2
+            else
+                printf "延迟: \e[31m失败\e[0m " >&2
             fi
             
-            if [[ $speed != "failed" ]]; then
-                printf "速度测试失败\n" >&2
+            if [[ "$speed" == "failed" ]]; then
+                printf "速度: \e[31m失败\e[0m " >&2
             else
-                printf "速度: \e[31m失败\e[0m\n" >&2
+                printf "速度: \e[31m失败\e[0m " >&2
             fi
+            printf "评分: \e[31m无效\e[0m\n" >&2
+            continue
+        fi
+        
+        mirror_scores[$mirror]=$score
+        
+        # 显示测试结果
+        printf "  \e[32m%-30s\e[0m → " "$mirror" >&2
+        if [[ "$latency" == "timeout" ]]; then
+            printf "延迟: \e[31m超时\e[0m " >&2
+        else
+            printf "延迟: \e[33m%4dms\e[0m " "$latency" >&2
+        fi
+        
+        if [[ "$speed" == "failed" ]]; then
+            printf "速度: \e[31m失败\e[0m " >&2
+        else
+            printf "速度: \e[36m%3dKB/s\e[0m " "$speed" >&2
+        fi
+        printf "评分: \e[35m%5d\e[0m\n" "$score" >&2
+        
+        # 更新最佳镜像
+        if [ $score -gt $best_score ]; then
+            best_score=$score
+            best_mirror=$mirror
         fi
     done < "$result_file"
     
     # 清理临时文件
-    rm -f "$result_file"
+    rm -f "$result_file" 2>/dev/null
 
-    if [ -z "$best_mirror" ]; then
+    if [ -z "$best_mirror" ] || [ $best_score -eq -1 ]; then
         echo -e "\n\e[31m错误：没有可用的镜像源，请检查网络连接\e[0m" >&2
         return 1
     else
@@ -245,7 +286,18 @@ find_fastest_mirror() {
         local best_speed=$(test_speed "$best_mirror")
         
         echo -e "\n\e[32m最佳镜像源：$best_mirror\e[0m" >&2
-        echo -e "  → 延迟: \e[33m${best_latency}ms\e[0m, 速度: \e[36m${best_speed}KB/s\e[0m, 综合评分: \e[35m${best_score}\e[0m" >&2
+        if [[ "$best_latency" == "timeout" ]]; then
+            echo -e "  → 延迟: \e[31m超时\e[0m" >&2
+        else
+            echo -e "  → 延迟: \e[33m${best_latency}ms\e[0m" >&2
+        fi
+        
+        if [[ "$best_speed" == "failed" ]]; then
+            echo -e "  → 速度: \e[31m失败\e[0m" >&2
+        else
+            echo -e "  → 速度: \e[36m${best_speed}KB/s\e[0m" >&2
+        fi
+        echo -e "  → 综合评分: \e[35m${best_score}\e[0m" >&2
         echo "$best_mirror"
         return 0
     fi
@@ -255,26 +307,29 @@ build_proxy_url() {
     local original_url=$1
     local best_mirror=$2
     
+    # 特殊处理官方源
+    if [ "$best_mirror" == "github.com" ]; then
+        echo "$original_url"
+        return
+    fi
+
     # 处理中文路径等特殊字符
-    original_url=$(echo "$original_url" | sed 's/ /%20/g' | sed 's/链接1/https:\/\/github.com\/ltdrdata\/ComfyUI-Manager/g')
+    original_url=$(echo "$original_url" | sed 's/ /%20/g')
     
     # 转换SSH协议到HTTPS
     if [[ "$original_url" == git@github.com:* ]]; then
         original_url="https://github.com/${original_url#git@github.com:}"
     fi
     
-    # 处理不同格式的GitHub URL
-    if [[ "$original_url" =~ ^https://github\.com/ ]]; then
-        # 直接拼接镜像域名和完整原始URL
+    # 修复关键问题：直接拼接原始URL，不去除https://
+    if [[ "$original_url" =~ ^https?:// ]]; then
         echo "https://${best_mirror}/${original_url}"
-    elif [[ "$original_url" =~ ^http://github\.com/ ]]; then
-        echo "http://${best_mirror}/${original_url}"
+    # 处理github.com开头的简写格式
     elif [[ "$original_url" =~ ^github\.com/ ]]; then
-        # 补全为完整URL
-        echo "https://${best_mirror}/https://${original_url}"
+        echo "https://${best_mirror}/https://github.com/${original_url#github.com/}"
     else
-        # 特殊处理 ComfyUI-Manager
-        if [[ "$original_url" == "/ComfyUI-Manager" ]]; then
+        # 特殊处理ComfyUI-Manager
+        if [[ "$original_url" == "/ComfyUI-Manager" || "$original_url" == "ComfyUI-Manager" ]]; then
             echo "https://${best_mirror}/https://github.com/ltdrdata/ComfyUI-Manager"
         else
             echo "$original_url"
@@ -289,6 +344,20 @@ main() {
         return 0
     fi
     
+    # 处理权重模式切换
+    local weight_changed=0
+    if [[ "$1" == "-l" || "$1" == "--latency" ]]; then
+        LATENCY_WEIGHT=1000
+        SPEED_WEIGHT=0
+        shift
+        weight_changed=1
+    elif [[ "$1" == "-s" || "$1" == "--speed" ]]; then
+        LATENCY_WEIGHT=0
+        SPEED_WEIGHT=1000
+        shift
+        weight_changed=1
+    fi
+    
     # 处理测试选项
     if [[ "$1" == "-t" || "$1" == "--test" ]]; then
         find_fastest_mirror
@@ -298,6 +367,11 @@ main() {
     if [ $# -lt 1 ]; then
         show_help
         return 1
+    fi
+    
+    # 显示当前权重模式
+    if [ $weight_changed -eq 1 ]; then
+        echo -e "\n\e[34m已切换权重模式：延迟=${LATENCY_WEIGHT}‰ 速度=${SPEED_WEIGHT}‰\e[0m" >&2
     fi
     
     # 获取最快的镜像源
@@ -310,11 +384,18 @@ main() {
     
     # 判断命令类型
     if [[ $1 == "clone" ]]; then
-        # CLONE 命令处理
-        local proxy_url=$(build_proxy_url "$original_url" "$best_mirror")
-        echo "使用镜像源: ${best_mirror}"
-        echo "执行命令: git ${@:1:$#-1} \"$proxy_url\""
-        git "${@:1:$#-1}" "$proxy_url"
+    # 提取目标路径（最后一个参数）
+    local target_path="${!#}"
+    
+    # 构建镜像URL（原始URL是倒数第二个参数）
+    local original_url="${@: -2:1}"  # 获取倒数第二个参数
+    local proxy_url=$(build_proxy_url "$original_url" "$best_mirror")
+    
+    echo "使用镜像源: ${best_mirror}"
+    echo "执行命令: git clone $proxy_url $target_path"
+    
+    # 执行：git clone <镜像URL> <目标路径>
+    git clone "$proxy_url" "$target_path"
     elif [[ $1 == "fetch" || $1 == "pull" ]]; then
         # PULL/FETCH 命令处理
         # 检查是否在git仓库中
@@ -392,5 +473,3 @@ main() {
 
 # 执行主函数
 main "$@"
-
-

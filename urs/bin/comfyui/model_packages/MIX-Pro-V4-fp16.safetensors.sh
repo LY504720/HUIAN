@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # 模型信息
-MODEL_NAME="detail_enhancer.safetensors"
+MODEL_NAME="MIX-Pro-V4-fp16.safetensors"
 MODEL_URL="https://hf-mirror.com/AIARTCHAN/MIX-Pro-V4/resolve/main/MIX-Pro-V4-fp16.safetensors"
-TARGET_DIR="$MODEL_DIR/loras"
+TARGET_DIR="$MODEL_DIR/checkpoints"
 
 # 下载模型 - 使用wget
 echo "下载模型: $MODEL_NAME"

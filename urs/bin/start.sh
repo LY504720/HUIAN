@@ -34,7 +34,7 @@ comfy_func() {
     else
         echo "安装ComfyUI..."
         cd ../../data
-        git clone https://gitclone.com/github.com/comfyanonymous/ComfyUI
+        mgit clone https://github.com/comfyanonymous/ComfyUI
     fi
 }
 

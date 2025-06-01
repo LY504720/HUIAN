@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/bin/bash
 
 # ====================== 可修改配置区域 ======================
 # GitHub 镜像源列表 - 您可以在这里添加/删除/修改镜像源
@@ -88,8 +88,8 @@ find_fastest_mirror() {
           mirror_speeds[$mirror]=$speed
           
           # ===== 新增逻辑：检测到低延迟源直接使用 =====
-          if [ $speed -lt 800 ]; then
-              echo -e "  \e[33m发现低延迟镜像源 $mirror (${speed}ms < 800ms)，直接选用\e[0m" >&2
+          if [ $speed -lt 900 ]; then
+              echo -e "  \e[33m发现低延迟镜像源 $mirror (${speed}ms < 900ms)，直接选用\e[0m" >&2
               best_mirror=$mirror
               best_time=$speed
               found_low_latency=1
@@ -121,6 +121,7 @@ find_fastest_mirror() {
       return 0
   fi
 }
+
 # 主函数
 main() {
     # 处理帮助选项

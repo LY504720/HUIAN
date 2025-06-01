@@ -164,7 +164,6 @@ test_mirror() {
     echo "$mirror $latency $speed" >> "$result_file"
 }
 
-# 查找最快的镜像源（多线程版）
 find_fastest_mirror() {
     echo "正在测试 GitHub 镜像源 (延迟权重:${LATENCY_WEIGHT}‰ 速度权重:${SPEED_WEIGHT}‰)..." >&2
     echo "测试文件: ${TEST_FILE} ($((TEST_FILE_SIZE/1000))KB)" >&2
@@ -382,20 +381,39 @@ main() {
     
     local original_url=${!#}
     
-    # 判断命令类型
     if [[ $1 == "clone" ]]; then
-    # 提取目标路径（最后一个参数）
-    local target_path="${!#}"
+        shift  # 移除"clone"
+        local original_url=""
+        local target_path=""
+
+        # 解析URL参数（最后一个非选项参数）
+        for arg in "$@"; do
+            if [[ "$arg" =~ ^(https?://|git@) ]]; then
+                original_url="$arg"
+            elif [[ ! "$arg" =~ ^- ]]; then  # 非选项参数
+                target_path="$arg"
+            fi
+        done
+
+        # 检查是否找到有效的URL
+        if [ -z "$original_url" ]; then
+            echo "错误：未找到有效的GitHub仓库URL。" >&2
+            return 1
+        fi
+
+        # 构建镜像URL
+        local proxy_url=$(build_proxy_url "$original_url" "$best_mirror")
+        
+        # 执行命令
+        echo "使用镜像源: ${best_mirror}"
+        if [ -n "$target_path" ]; then
+            echo "执行命令: git clone $proxy_url $target_path"
+            git clone "$proxy_url" "$target_path"
+        else
+            echo "执行命令: git clone $proxy_url"
+            git clone "$proxy_url"
+        fi
     
-    # 构建镜像URL（原始URL是倒数第二个参数）
-    local original_url="${@: -2:1}"  # 获取倒数第二个参数
-    local proxy_url=$(build_proxy_url "$original_url" "$best_mirror")
-    
-    echo "使用镜像源: ${best_mirror}"
-    echo "执行命令: git clone $proxy_url $target_path"
-    
-    # 执行：git clone <镜像URL> <目标路径>
-    git clone "$proxy_url" "$target_path"
     elif [[ $1 == "fetch" || $1 == "pull" ]]; then
         # PULL/FETCH 命令处理
         # 检查是否在git仓库中

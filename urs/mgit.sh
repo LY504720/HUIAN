@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ====================== 可修改配置区域 ======================
-# GitHub 镜像源列表 - 您可以在这里添加/删除/修改镜像源
+# GitHub 镜像源列表
 mirrors=(
     "github.moeyy.xyz"
     "github.proxy.class3.fun"
@@ -26,11 +26,11 @@ mirrors=(
     "j.1lin.dpdns.org"
 )
 
-# 超时设置（秒）- 修改这个值可以调整测试超时时间
+# 超时设置（秒）
 TIMEOUT=3
 
-# 低延迟阈值（毫秒）- 低于此值直接使用
-LOW_LATENCY_THRESHOLD=850
+# 低延迟阈值（毫秒）
+LOW_LATENCY_THRESHOLD=800
 
 # ====================== 脚本功能区域 ======================
 # 显示帮助信息
@@ -134,7 +134,8 @@ build_proxy_url() {
     
     # 确保以 https://github.com/ 开头
     if [[ "$original_url" =~ ^https://github.com/ ]]; then
-        echo "https://${best_mirror}/${original_url#https://github.com/}"
+        # 修复URL拼接问题：https://镜像源/https://github.com/...
+        echo "https://${best_mirror}/${original_url}"
     else
         echo "$original_url"
     fi

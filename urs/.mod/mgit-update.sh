@@ -15,5 +15,4 @@ sed -i '1s|^.*$|#!/usr/bin/env bash|' "$INSTALL_PATH"
 chmod +x "$INSTALL_PATH"
 sed -i "2i# Installed: $(date +%Y.%m.%d)" "$INSTALL_PATH"
 rm mgit-update.sh
-read -n 1 -s -r
 echo "mgit初始化完成"

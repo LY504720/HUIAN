@@ -23,23 +23,31 @@ menu_items=(
 option1_func() {
     clear
     cd ../../../data/ComfyUI && python3 main.py --cpu --disable-xformers --cpu-vae --disable-cuda-malloc --force-fp16 --fp8_e4m3fn-unet --disable-xformers --fp8_e4m3fn-text-enc --fast --disable-smart-memory --use-pytorch-cross-attention
+    SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cd "$SCRIPT_DIR"
     read -n 1 -s -r
 }
 
 option2_func() {
     cd ../../../data/ComfyUI && python3 main.py --cpu --disable-xformers --cpu-vae --disable-cuda-malloc --use-pytorch-cross-attention --force-fp16 --fp16-unet --disable-xformers --fp16-text-enc --fast --disable-smart-memory
+    SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cd "$SCRIPT_DIR"
     read -n 1 -s -r
 }
 
 option3_func() {
     clear
     cd ../../../data/ComfyUI && python3 main.py --cpu
+    SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cd "$SCRIPT_DIR"
     read -n 1 -s -r
 }
 
 option4_func() {
     clear
     bash open~.sh --customize
+    SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cd "$SCRIPT_DIR"
     read -n 1 -s -r
 }
 

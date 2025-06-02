@@ -32,7 +32,7 @@ echo -e "${YELLOW}项目根目录: $PROJECT_ROOT${NC}"
 echo -e "${YELLOW}开始更新HUIAN项目...${NC}"
 
 # 项目仓库URL
-REPO_URL="https://gitclone.com/github.com/LY504720/HUIAN.git"
+REPO_URL="https://github.com/LY504720/HUIAN.git"
 
 if [[ -d ".git" ]]; then
     echo -e "${GREEN}找到现有仓库，开始拉取最新更改...${NC}"

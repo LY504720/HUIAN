@@ -61,6 +61,7 @@ install_manager() {
 }
 
 # 添加权限管理功能
+# 添加权限管理功能
 add_permission_management() {
     echo -e "${color_green}添加权限管理功能...${color_reset}"
     
@@ -194,13 +195,16 @@ EOL
         if ! grep -q "permission_manager" "$INIT_FILE"; then
             echo -e "${color_green}集成权限管理到 ComfyUI-Manager...${color_reset}"
             
-            # 添加导入语句
-            sed -i "1iimport sys\nsys.path.append(os.path.dirname(os.path.realpath(__file__)))\nfrom permission_manager import setup as setup_permissions" "$INIT_FILE"
-            
-            # 在适当位置调用权限设置
-            sed -i "/def setup():/a \    # 初始化权限管理系统\n    setup_permissions()" "$INIT_FILE"
+            # 修复：添加 os 模块导入
+            sed -i "1iimport os\nimport sys\nsys.path.append(os.path.dirname(os.path.realpath(__file__)))\nfrom permission_manager import setup as setup_permissions" "$INIT_FILE"
         else
-            echo -e "${color_yellow}权限管理已经集成，跳过...${color_reset}"
+            # 检查并修复缺失的 os 导入
+            if ! grep -q "import os" "$INIT_FILE"; then
+                echo -e "${color_yellow}修复: 添加缺失的 os 导入${color_reset}"
+                sed -i "1iimport os" "$INIT_FILE"
+            else
+                echo -e "${color_yellow}权限管理已经集成，跳过...${color_reset}"
+            fi
         fi
     else
         echo -e "${color_red}错误: 找不到 ComfyUI-Manager 的 __init__.py 文件${color_reset}"
@@ -208,7 +212,6 @@ EOL
     
     echo -e "${color_green}权限管理功能添加完成!${color_reset}"
 }
-
 # 创建默认配置文件
 create_default_config() {
     CONFIG_FILE="$MANAGER_DIR/permissions.json"
@@ -228,7 +231,6 @@ EOL
     fi
 }
 
-# 显示安装完成信息
 # 显示安装完成信息
 show_completion() {
     # 获取绝对路径

@@ -66,7 +66,7 @@ if [[ -d ".git" ]]; then
     git clean -f -d --exclude=data/
     
     # 拉取更新
-    mgit pull origin "$CURRENT_BRANCH"
+    git pull origin "$CURRENT_BRANCH"
     
     if [[ $? -eq 0 ]]; then
         echo -e "${GREEN}项目更新成功！${NC}"

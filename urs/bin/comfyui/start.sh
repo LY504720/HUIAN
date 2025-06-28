@@ -16,7 +16,7 @@ source ../../color.sh
 menu_items=(
     "${color_lv}:启动ComfyUI:launch_comfyui"
     "${color_qing}:模型管理:manage_models"
-    "${color_fen}:安装插件管理器:manage_plugins"
+    "${color_fen}:插件管理器:manage_plugins"
 )
 
 #====================== ComfyUI 功能函数 ======================
@@ -36,7 +36,7 @@ manage_models() {
 manage_plugins() {
     clear
     bash node.sh
-    read -n 1 -s -r
+    
 }
 
 
